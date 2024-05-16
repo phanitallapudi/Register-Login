@@ -81,6 +81,7 @@ class User(BaseModel):
     name: str
     company_name: str
     designation: str
+    username: str
     official_email: EmailStr
     password: str
     confirm_password: str
@@ -144,7 +145,7 @@ class User(BaseModel):
             ) 
         return v
 
-    @validator("name", "company_name", "designation")
+    @validator("name", "username", "company_name", "designation")
     def not_empty(cls, v):
         if not v.strip():
             raise HTTPException(
@@ -183,9 +184,14 @@ app.add_middleware(
 
 @app.post('/register')
 def create_user(request: User):
-    existing_user = db["users"].find_one({"official_email": request.official_email})
-    if existing_user:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"User {request.official_email} already exists")
+    existing_username = user_data.find_one({"username": request.username})
+    existing_email = user_data.find_one({"official_email": request.official_email})
+
+    if existing_username:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Username already exists")
+    
+    if existing_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Email already exists")
     
     hashed_pass = Hash.bcrypt(request.password)
     user_object = dict(request)
@@ -206,7 +212,7 @@ def create_user(request: User):
 
 @app.post('/login')
 def login(request: OAuth2PasswordRequestForm = Depends()):
-    user = user_data.find_one({"official_email": request.username})
+    user = user_data.find_one({"username": request.username})
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'No user found with this {request.username} email')
     
