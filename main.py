@@ -9,7 +9,7 @@ from passlib.context import CryptContext
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.security import OAuth2PasswordRequestForm
 from pymongo import MongoClient
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt
 from dotenv import load_dotenv
 
@@ -80,6 +80,7 @@ class TokenData(BaseModel):
 class User(BaseModel):
     name: str
     company_name: str
+    designation: str
     official_email: EmailStr
     password: str
     confirm_password: str
@@ -143,7 +144,7 @@ class User(BaseModel):
             ) 
         return v
 
-    @validator("name", "company_name")
+    @validator("name", "company_name", "designation")
     def not_empty(cls, v):
         if not v.strip():
             raise HTTPException(
@@ -182,25 +183,25 @@ app.add_middleware(
 
 @app.post('/register')
 def create_user(request: User):
-    existing_user = db["Users_data"].find_one({"official_email": request.official_email})
+    existing_user = db["users"].find_one({"official_email": request.official_email})
     if existing_user:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"official_email {request.official_email} already exists")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"User {request.official_email} already exists")
     
     hashed_pass = Hash.bcrypt(request.password)
     user_object = dict(request)
     user_object["password"] = hashed_pass
     user_object["confirm_password"] = hashed_pass
     user_object["role"] = "user"
-    user_object["expiry"] = datetime.utcnow() + timedelta(days=3)
+    user_object["expiry"] = datetime.now() + timedelta(days=3)
 
     user_id = user_data.insert_one(user_object)
 
     if user_id:
         respone = {"message": "User created successfully"}
         return JSONResponse(content=respone, status_code=status.HTTP_201_CREATED)
-    else:
-        response = {"message": "Failed to create user"}
-        return JSONResponse(content=respone, status_code=status.HTTP_400_BAD_REQUEST)
+
+    response = {"message": "Failed to create user"}
+    return JSONResponse(content=respone, status_code=status.HTTP_400_BAD_REQUEST)
 
 
 @app.post('/login')
@@ -217,7 +218,7 @@ def login(request: OAuth2PasswordRequestForm = Depends()):
     expiry = user.get("expiry")
 
     if expiry < datetime.now():
-        user_data.delete_one({"official_email": request.username})
+        #user_data.delete_one({"official_email": request.username})
         raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Account credentials expired, please create a new one."
@@ -229,6 +230,11 @@ def login(request: OAuth2PasswordRequestForm = Depends()):
     
     response = {"access_token": access_token, "token_type": "bearer"}
     return JSONResponse(content=response, status_code=status.HTTP_200_OK)
+
+@app.post("/test_creds", dependencies=[Depends(authorize_user)])
+async def test_creds(current_user: User = Depends(get_current_user), token: str = Depends(oauth2_scheme)):
+    response = {"message": True}
+    return JSONResponse(content=response, status_code=200)
 
 @app.get("/")
 async def root():
