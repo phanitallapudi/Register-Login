@@ -214,6 +214,15 @@ def login(request: OAuth2PasswordRequestForm = Depends()):
     
     # Get the user's role
     user_role = user.get("role")
+    expiry = user.get("expiry")
+
+    if expiry < datetime.now():
+        user_data.delete_one({"official_email": request.username})
+        raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Account credentials expired, please create a new one."
+            )  
+
 
     # Create the access token with the user's role
     access_token = create_access_token(data={"sub": user["official_email"], "role": user_role})
