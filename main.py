@@ -230,9 +230,8 @@ def login(request: OAuth2PasswordRequestForm = Depends()):
                 detail="Account credentials expired, please create a new one."
             )  
 
-
     # Create the access token with the user's role
-    access_token = create_access_token(data={"sub": user["official_email"], "role": user_role})
+    access_token = create_access_token(data={"sub": user["username"], "role": user_role})
     
     response = {"access_token": access_token, "token_type": "bearer"}
     return JSONResponse(content=response, status_code=status.HTTP_200_OK)
@@ -241,6 +240,20 @@ def login(request: OAuth2PasswordRequestForm = Depends()):
 async def test_creds(current_user: User = Depends(get_current_user), token: str = Depends(oauth2_scheme)):
     response = {"message": True}
     return JSONResponse(content=response, status_code=200)
+
+@app.get("/read_user_details", dependencies=[Depends(authorize_user)])
+def read_user_details(current_user: User = Depends(get_current_user)):
+    username = current_user.get("sub")
+    print(f"Current user username: {username}")
+    if not username:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid username")
+
+    user_details = user_data.find_one({"username": username}, {"_id": 0, "password": 0, "confirm_password": 0})
+
+    if not user_details:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    return user_details
 
 @app.get("/")
 async def root():
