@@ -255,6 +255,51 @@ def read_user_details(current_user: User = Depends(get_current_user)):
 
     return user_details
 
+from pydantic import BaseModel, field_validator
+import re
+
+class PasswordResetConfirm(BaseModel):
+    new_password: str
+    confirm_password: str
+
+    @field_validator("new_password")
+    def validate_password_strength(cls, v):
+        password_pattern = r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$'
+        if not re.match(password_pattern, v):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters long, include an uppercase letter, a lowercase letter, a number, and a special character"
+            )
+        return v
+
+    @field_validator("confirm_password")
+    def passwords_match(cls, v, values, **kwargs):
+        password = values.get('new_password')
+        if password and v != password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Passwords do not match"
+            )
+        return v
+
+@app.post("/reset_password_confirm", dependencies=[Depends(authorize_user)])
+def reset_password_confirm(request: PasswordResetConfirm, current_user: User = Depends(get_current_user), token: str = Depends(oauth2_scheme)):
+    username = current_user.get("sub")
+    user = user_data.find_one({"official_email": username})
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User with this email not found")
+
+    if request.new_password != request.confirm_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Passwords do not match")
+
+    hashed_password = Hash.bcrypt(request.new_password)
+    user_data.update_one(
+        {"official_email": request.email},
+        {"$set": {"password": hashed_password, "confirm_password": hashed_password}}
+    )
+
+    return {"message": "Password has been reset successfully"}
+
 @app.get("/")
 async def root():
     return RedirectResponse(url="/docs")
