@@ -79,51 +79,10 @@ class TokenData(BaseModel):
 
 class User(BaseModel):
     name: str
-    company_name: str
-    designation: str
     username: str
-    official_email: EmailStr
+    email: EmailStr
     password: str
     confirm_password: str
-
-    @validator("official_email")
-    def validate_official_email(cls, v):
-        business_email_pattern = r'^[a-zA-Z0-9._%+-]+@(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$'
-        if not re.match(business_email_pattern, v):
-            raise ValueError("Invalid email format")
-
-        free_email_providers = [
-            "gmail.com",
-            "yahoo.com",
-            "outlook.com",
-            "hotmail.com",
-            "aol.com",
-            "zoho.com",
-            "protonmail.com",
-            "icloud.com",
-            "gmx.com",
-            "yandex.com",
-            "mail.com",
-            "tutanota.com",
-            "lycos.com",
-            "fastmail.com",
-            "hushmail.com",
-            "mailfence.com",
-            "inbox.com",
-            "rediffmail.com",
-            "runbox.com",
-            "mailbox.org",
-            "posteo.net",
-            "openmailbox.org"
-        ]
-        domain = v.split('@')[1]
-        if domain in free_email_providers:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, 
-                detail="Business email required, free email addresses are not allowed"
-            )
-        
-        return v
     
     @validator("password")
     def validate_password_strength(cls, v):
@@ -145,7 +104,7 @@ class User(BaseModel):
             ) 
         return v
 
-    @validator("name", "username", "company_name", "designation")
+    @validator("name", "username")
     def not_empty(cls, v):
         if not v.strip():
             raise HTTPException(
@@ -185,7 +144,7 @@ app.add_middleware(
 @app.post('/register')
 def create_user(request: User):
     existing_username = user_data.find_one({"username": request.username})
-    existing_email = user_data.find_one({"official_email": request.official_email})
+    existing_email = user_data.find_one({"email": request.email})
 
     if existing_username:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Username already exists")
@@ -198,16 +157,15 @@ def create_user(request: User):
     user_object["password"] = hashed_pass
     user_object["confirm_password"] = hashed_pass
     user_object["role"] = "user"
-    user_object["expiry"] = datetime.now() + timedelta(days=3)
 
     user_id = user_data.insert_one(user_object)
 
     if user_id:
-        respone = {"message": "User created successfully"}
-        return JSONResponse(content=respone, status_code=status.HTTP_201_CREATED)
+        response = {"message": "User created successfully"}
+        return JSONResponse(content=response, status_code=status.HTTP_201_CREATED)
 
     response = {"message": "Failed to create user"}
-    return JSONResponse(content=respone, status_code=status.HTTP_400_BAD_REQUEST)
+    return JSONResponse(content=response, status_code=status.HTTP_400_BAD_REQUEST)
 
 
 @app.post('/login')
@@ -221,14 +179,6 @@ def login(request: OAuth2PasswordRequestForm = Depends()):
     
     # Get the user's role
     user_role = user.get("role")
-    expiry = user.get("expiry")
-
-    if expiry < datetime.now():
-        #user_data.delete_one({"official_email": request.username})
-        raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Account credentials expired, please create a new one."
-            )  
 
     # Create the access token with the user's role
     access_token = create_access_token(data={"sub": user["username"], "role": user_role})
@@ -236,69 +186,9 @@ def login(request: OAuth2PasswordRequestForm = Depends()):
     response = {"access_token": access_token, "token_type": "bearer"}
     return JSONResponse(content=response, status_code=status.HTTP_200_OK)
 
-@app.post("/test_creds", dependencies=[Depends(authorize_user)])
-async def test_creds(current_user: User = Depends(get_current_user), token: str = Depends(oauth2_scheme)):
-    response = {"message": True}
-    return JSONResponse(content=response, status_code=200)
-
 @app.get("/read_user_details", dependencies=[Depends(authorize_user)])
 def read_user_details(current_user: User = Depends(get_current_user)):
-    username = current_user.get("sub")
-    print(f"Current user username: {username}")
-    if not username:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid username")
-
-    user_details = user_data.find_one({"username": username}, {"_id": 0, "password": 0, "confirm_password": 0})
-
-    if not user_details:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-    return user_details
-
-from pydantic import BaseModel, field_validator
-import re
-
-class PasswordResetConfirm(BaseModel):
-    new_password: str
-    confirm_password: str
-
-    @field_validator("new_password")
-    def validate_password_strength(cls, v):
-        password_pattern = r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$'
-        if not re.match(password_pattern, v):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Password must be at least 8 characters long, include an uppercase letter, a lowercase letter, a number, and a special character"
-            )
-        return v
-
-    @field_validator("confirm_password")
-    def passwords_match(cls, v, values, **kwargs):
-        password = values.get('new_password')
-        if password and v != password:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Passwords do not match"
-            )
-        return v
-
-@app.post("/reset_password_confirm", dependencies=[Depends(authorize_user)])
-def reset_password_confirm(request: PasswordResetConfirm, current_user: User = Depends(get_current_user), token: str = Depends(oauth2_scheme)):
-    username = current_user.get("sub")
-    user = user_data.find_one({"official_email": username})
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User with this email not found")
-
-    if request.new_password != request.confirm_password:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Passwords do not match")
-
-    hashed_password = Hash.bcrypt(request.new_password)
-    user_data.update_one(
-        {"official_email": request.email},
-        {"$set": {"password": hashed_password, "confirm_password": hashed_password}}
-    )
-
-    return {"message": "Password has been reset successfully"}
+    return current_user
 
 @app.get("/")
 async def root():
