@@ -7,8 +7,3 @@ passlib
 python-multipart
 bcrypt
 pymongo
-langchain
-langchain_openai
-langchain_community
-pypdf
-sentence-transformers
